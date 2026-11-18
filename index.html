@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mô Phỏng Vận Hành Nhà Máy Nhiệt Điện Than 3D</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Import Three.js và OrbitControls -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+        }
+        .label-3d {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.75);
+            color: #38bdf8;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            pointer-events: none;
+            border: 1px solid #0284c7;
+            transform: translate(-50%, -50%);
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body class="text-slate-100">
+
+    <!-- Thanh điều khiển trên cùng (Header SCADA) -->
+    <header class="fixed top-0 left-0 right-0 z-20 glass-panel px-4 py-2 flex flex-wrap items-center justify-between gap-2 shadow-lg">
+        <div class="flex items-center gap-3">
+            <div class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" id="status-led"></div>
+            <div>
+                <h1 class="text-sm md:text-base font-bold text-sky-400 tracking-wide">NHIỆT ĐIỆN THAN - TỔ MÁY S1 (600MW)</h1>
+                <p class="text-[11px] text-slate-400">Chu trình Rankine quá nhiệt trung gian | Nhấp vào thiết bị để xem chi tiết</p>
+            </div>
+        </div>
+
+        <!-- Nút điều khiển vận hành -->
+        <div class="flex items-center gap-2">
+            <button id="btn-start" onclick="setSystemState('RUNNING')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded shadow transition cursor-pointer">
+                ▶ KHỞI ĐỘNG LÒ & TUA-BIN
+            </button>
+            <button id="btn-stop" onclick="setSystemState('STOPPED')" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded shadow transition cursor-pointer">
+                ■ DỪNG KHẨN CẤP
+            </button>
+            <button onclick="resetCamera()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold rounded border border-slate-500 transition cursor-pointer">
+                ⟲ Góc nhìn chuẩn
+            </button>
+        </div>
+    </header>
+
+    <!-- Bảng thông số vận hành thời gian thực (Góc trái) -->
+    <aside class="fixed top-16 left-3 z-10 w-64 md:w-72 glass-panel rounded-lg p-3 shadow-xl text-xs space-y-2.5">
+        <div class="flex justify-between items-center border-b border-slate-700 pb-1.5">
+            <span class="font-bold text-sky-300 uppercase">Thông số vận hành (SCADA)</span>
+            <span id="system-badge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-900 text-emerald-300 border border-emerald-500">ĐANG VẬN HÀNH</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+            <div class="bg-slate-800/80 p-2 rounded border border-slate-700">
+                <div class="text-slate-400 text-[10px]">Công suất phát</div>
+                <div class="text-base font-bold text-amber-400"><span id="val-power">600.0</span> <span class="text-xs font-normal">MW</span></div>
+            </div>
+            <div class="bg-slate-800/80 p-2 rounded border border-slate-700">
+                <div class="text-slate-400 text-[10px]">Tốc độ Tua-bin</div>
+                <div class="text-base font-bold text-sky-400"><span id="val-rpm">3000</span> <span class="text-xs font-normal">rpm</span></div>
+            </div>
+            <div class="bg-slate-800/80 p-2 rounded border border-slate-700">
+                <div class="text-slate-400 text-[10px]">Nhiệt độ hơi chính</div>
+                <div class="text-base font-bold text-rose-400"><span id="val-temp">540</span> <span class="text-xs font-normal">°C</span></div>
+            </div>
+            <div class="bg-slate-800/80 p-2 rounded border border-slate-700">
+                <div class="text-slate-400 text-[10px]">Áp suất hơi chính</div>
+                <div class="text-base font-bold text-purple-400"><span id="val-pressure">17.5</span> <span class="text-xs font-normal">MPa</span></div>
+            </div>
+        </div>
+
+        <!-- Thanh tiến trình quy trình -->
+        <div class="pt-1 border-t border-slate-700 space-y-1">
+            <div class="text-[11px] font-semibold text-slate-300">Chú giải màu dòng chảy:</div>
+            <div class="flex items-center gap-2 text-[11px]"><span class="w-3 h-3 inline-block bg-stone-600 rounded-sm"></span> Băng tải than nghiền</div>
+            <div class="flex items-center gap-2 text-[11px]"><span class="w-3 h-3 inline-block bg-red-500 rounded-sm"></span> Ống hơi quá nhiệt (540°C)</div>
+            <div class="flex items-center gap-2 text-[11px]"><span class="w-3 h-3 inline-block bg-blue-500 rounded-sm"></span> Nước ngưng & Nước làm mát</div>
+            <div class="flex items-center gap-2 text-[11px]"><span class="w-3 h-3 inline-block bg-amber-400 rounded-sm"></span> Đường dây tải điện 500kV</div>
+        </div>
+    </aside>
+
+    <!-- Hộp thoại thông tin thiết bị khi người dùng Click vào mô hình 3D (Góc phải) -->
+    <div id="info-modal" class="hidden fixed bottom-4 right-4 z-20 w-80 glass-panel rounded-lg p-4 shadow-2xl border-sky-400">
+        <div class="flex justify-between items-start mb-2">
+            <h3 id="modal-title" class="text-sm font-bold text-amber-400">Tên thiết bị</h3>
+            <button onclick="closeModal()" class="text-slate-400 hover:text-white text-sm font-bold cursor-pointer">✕</button>
+        </div>
+        <p id="modal-desc" class="text-xs text-slate-300 leading-relaxed mb-2">Mô tả nguyên lý hoạt động...</p>
+        <div id="modal-specs" class="bg-slate-900/90 p-2 rounded text-[11px] text-sky-300 font-mono border border-slate-700"></div>
+    </div>
+
+    <!-- Nhãn nổi 3D -->
+    <div id="labels-container"></div>
+
+    <!-- Khung chứa Canvas 3D -->
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- 1. KHỞI TẠO CẢNH 3D (SCENE, CAMERA, RENDERER) ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0f172a);
+        scene.fog = new THREE.FogExp2(0x0f172a, 0.012);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(28, 22, 32);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05;
+
+        // --- 2. ÁNH SÁNG & MẶT ĐẤT ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(20, 40, 20);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // Mặt nền nhà máy & Lưới kỹ thuật
+        const groundGeo = new THREE.PlaneGeometry(100, 100);
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const gridHelper = new THREE.GridHelper(80, 40, 0x334155, 0x1e293b);
+        gridHelper.position.y = 0.01;
+        scene.add(gridHelper);
+
+        // --- 3. DỮ LIỆU THIẾT BỊ & DỰNG MÔ HÌNH 3D NHÀ MÁY NHIỆT ĐIỆN ---
+        const interactableObjects = [];
+        const labels = [];
+
+        function createEquipment(mesh, name, desc, specs, labelPosOffset = [0, 3, 0]) {
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mesh.userData = { name, desc, specs };
+            scene.add(mesh);
+            interactableObjects.push(mesh);
+
+            // Tạo nhãn tên thiết bị trên màn hình
+            const div = document.createElement('div');
+            div.className = 'label-3d';
+            div.textContent = name;
+            document.getElementById('labels-container').appendChild(div);
+            labels.push({ element: div, mesh: mesh, offset: new THREE.Vector3(...labelPosOffset) });
+            return mesh;
+        }
+
+        // A. KHO THAN & BĂNG TẢI (Coal Yard & Conveyor)
+        const coalPileGeo = new THREE.ConeGeometry(4.5, 3, 16);
+        const coalMat = new THREE.MeshStandardMaterial({ color: 0x1c1917, roughness: 0.9 });
+        const coalPile = new THREE.Mesh(coalPileGeo, coalMat);
+        coalPile.position.set(-22, 1.5, 6);
+        createEquipment(
+            coalPile,
+            "1. Kho Than & Băng Tải",
+            "Than đá được nghiền mịn thành bột than và thổi vào buồng đốt lò hơi thông qua hệ thống băng tải và máy nghiền.",
+            "Nhiên liệu: Than cám Bitum | Lưu lượng: 240 tấn/giờ",
+            [0, 2.5, 0]
+        );
+
+        // Băng tải nghiêng lên lò hơi
+        const conveyorGeo = new THREE.BoxGeometry(10, 0.5, 1.2);
+        const conveyorMat = new THREE.MeshStandardMaterial({ color: 0x475569 });
+        const conveyor = new THREE.Mesh(conveyorGeo, conveyorMat);
+        conveyor.position.set(-16.5, 4.5, 3);
+        conveyor.rotation.z = 0.45;
+        conveyor.rotation.y = 0.3;
+        scene.add(conveyor);
+
+        // B. LÒ HƠI (Boiler)
+        const boilerGroup = new THREE.Group();
+        const boilerBody = new THREE.Mesh(
+            new THREE.BoxGeometry(6, 12, 6),
+            new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.5, roughness: 0.4 })
+        );
+        boilerBody.position.y = 6;
+        boilerGroup.add(boilerBody);
+
+        // Ngọn lửa bên trong lò hơi (phát sáng)
+        const furnaceMat = new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0xea580c, emissiveIntensity: 1.5 });
+        const furnace = new THREE.Mesh(new THREE.BoxGeometry(4.2, 4, 4.2), furnaceMat);
+        furnace.position.set(0, 3.5, 1.1);
+        boilerGroup.add(furnace);
+
+        boilerGroup.position.set(-10, 0, 0);
+        createEquipment(
+            boilerGroup,
+            "2. Lò Hơi (Boiler)",
+            "Đốt cháy bột than ở nhiệt độ trên 1300°C để đun sôi nước tinh khiết thành hơi nước quá nhiệt áp suất cao.",
+            "Nhiệt độ hơi: 540°C | Áp suất: 17.5 MPa",
+            [0, 13, 0]
+        );
+
+        // C. ỐNG KHÓI & LỌC BỤI TĨNH ĐIỆN (ESP & Chimney)
+        const chimney = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.9, 1.4, 18, 20),
+            new THREE.MeshStandardMaterial({ color: 0x94a3b8 })
+        );
+        chimney.position.set(-12, 9, -8);
+        createEquipment(
+            chimney,
+            "Hệ thống Xử lý Khói & Ống Khói",
+            "Khói thải đi qua bộ lọc bụi tĩnh điện (ESP) và hệ thống khử lưu huỳnh (FGD) đạt chuẩn môi trường trước khi thoát ra ngoài.",
+            "Hiệu suất lọc bụi: 99.8% | Chiều cao: 180m",
+            [0, 10, 0]
+        );
+
+        // D. ĐƯỜNG ỐNG HƠI CHÍNH (Main Steam Pipe - Màu đỏ)
+        const steamPipeMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x7f1d1d, metalness: 0.6 });
+        const steamPipe1 = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 9, 12), steamPipeMat);
+        steamPipe1.rotation.z = Math.PI / 2;
+        steamPipe1.position.set(-3.5, 8, 0);
+        scene.add(steamPipe1);
+
+        const steamPipe2 = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 4.5, 12), steamPipeMat);
+        steamPipe2.position.set(1, 5.8, 0);
+        scene.add(steamPipe2);
+
+        // E. TUA-BIN HƠI NƯỚC & MÁY PHÁT ĐIỆN (Steam Turbine & Generator)
+        const turbineGroup = new THREE.Group();
+        // Trục quay (Rotor)
+        const rotor = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.4, 0.4, 11, 16),
+            new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, roughness: 0.1 })
+        );
+        rotor.rotation.z = Math.PI / 2;
+        rotor.position.y = 3.5;
+        turbineGroup.add(rotor);
+
+        // Các tầng cánh tua-bin (Cao áp, Trung áp, Hạ áp)
+        const bladeMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.7 });
+        [-2.5, -0.5, 1.5].forEach((xPos, idx) => {
+            const casing = new THREE.Mesh(new THREE.CylinderGeometry(1.1 + idx * 0.3, 1.1 + idx * 0.3, 1.4, 20), bladeMat);
+            casing.rotation.z = Math.PI / 2;
+            casing.position.set(xPos, 3.5, 0);
+            turbineGroup.add(casing);
+        });
+
+        // Máy phát điện (Generator)
+        const generator = new THREE.Mesh(
+            new THREE.BoxGeometry(3.2, 2.8, 2.8),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.4 })
+        );
+        generator.position.set(4.5, 3.5, 0);
+        turbineGroup.add(generator);
+
+        turbineGroup.position.set(2, 0, 0);
+        createEquipment(
+            turbineGroup,
+            "3. Tua-bin Hơi & Máy Phát Điện",
+            "Hơi nước áp suất cao làm quay các tầng cánh tua-bin (3000 vòng/phút), kéo theo rotor máy phát điện tạo ra dòng điện xoay chiều.",
+            "Tốc độ: 3000 rpm | Điện áp đầu cực: 22 kV",
+            [1, 6, 0]
+        );
+
+        // F. BÌNH NGƯNG & THÁP GIẢI NHIỆT (Condenser & Cooling Tower)
+        const coolingTower = new THREE.Mesh(
+            new THREE.CylinderGeometry(2.4, 3.8, 9, 24, 1, true),
+            new THREE.MeshStandardMaterial({ color: 0xcbd5e1, side: THREE.DoubleSide })
+        );
+        coolingTower.position.set(2, 4.5, -11);
+        createEquipment(
+            coolingTower,
+            "4. Tháp Giải Nhiệt & Bình Ngưng",
+            "Hơi nước sau khi qua tua-bin được làm mát và ngưng tụ thành nước lỏng để bơm tuần hoàn trở lại lò hơi.",
+            "Nhiệt độ nước tuần hoàn: 32°C",
+            [0, 5.5, 0]
+        );
+
+        // Đường ống nước tuần hoàn (Màu xanh dương)
+        const waterPipeMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6 });
+        const waterPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 9, 12), waterPipeMat);
+        waterPipe.rotation.x = Math.PI / 2;
+        waterPipe.position.set(2, 1.2, -5.5);
+        scene.add(waterPipe);
+
+        // G. MÁY BIẾN ÁP & TRẠM PHÂN PHỐI 500KV (Transformer & Switchyard)
+        const transformer = new THREE.Mesh(
+            new THREE.BoxGeometry(2.8, 3.2, 2.4),
+            new THREE.MeshStandardMaterial({ color: 0x10b981, metalness: 0.5 })
+        );
+        transformer.position.set(12, 1.6, 0);
+        createEquipment(
+            transformer,
+            "5. Máy Biến Áp Tăng Áp & Trạm 500kV",
+            "Nâng điện áp từ 22kV lên 500kV để truyền tải đi xa trên lưới điện quốc gia, giảm tổn thất điện năng.",
+            "Tỷ số biến áp: 22kV / 500kV | Công suất: 650 MVA",
+            [0, 3.5, 0]
+        );
+
+        // Cột điện cao thế
+        const pylon = new THREE.Mesh(
+            new THREE.ConeGeometry(1.5, 11, 4),
+            new THREE.MeshStandardMaterial({ color: 0x64748b, wireframe: true })
+        );
+        pylon.position.set(19, 5.5, 0);
+        scene.add(pylon);
+
+        // Dây dẫn điện cao thế (Màu vàng)
+        const wireMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+        const wire = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 7, 8), wireMat);
+        wire.rotation.z = Math.PI / 2;
+        wire.position.set(15.5, 4.5, 0);
+        scene.add(wire);
+
+        // --- 4. HIỆU ỨNG HẠT KHÓI & HƠI NƯỚC (PARTICLES) ---
+        const smokeParticles = [];
+        const smokeGeo = new THREE.SphereGeometry(0.4, 8, 8);
+        const smokeMat = new THREE.MeshBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.45 });
+
+        for (let i = 0; i < 25; i++) {
+            const p = new THREE.Mesh(smokeGeo, smokeMat);
+            p.position.set(-12 + (Math.random() - 0.5), 18 + i * 0.4, -8 + (Math.random() - 0.5));
+            p.userData.speed = 0.03 + Math.random() * 0.02;
+            scene.add(p);
+            smokeParticles.push(p);
+        }
+
+        // --- 5. LOGIC VẬN HÀNH & TƯƠNG TÁC ---
+        let isRunning = true;
+
+        window.setSystemState = function(state) {
+            isRunning = (state === 'RUNNING');
+            const badge = document.getElementById('system-badge');
+            const led = document.getElementById('status-led');
+
+            if (isRunning) {
+                badge.textContent = "ĐANG VẬN HÀNH";
+                badge.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-900 text-emerald-300 border border-emerald-500";
+                led.className = "w-3 h-3 rounded-full bg-emerald-400 animate-pulse";
+                furnaceMat.emissiveIntensity = 1.5;
+            } else {
+                badge.textContent = "ĐÃ DỪNG MÁY";
+                badge.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-rose-900 text-rose-300 border border-rose-500";
+                led.className = "w-3 h-3 rounded-full bg-rose-500";
+                furnaceMat.emissiveIntensity = 0;
+            }
+        };
+
+        window.resetCamera = function() {
+            camera.position.set(28, 22, 32);
+            controls.target.set(0, 3, 0);
+        };
+
+        window.closeModal = function() {
+            document.getElementById('info-modal').classList.add('hidden');
+        };
+
+        // Xử lý Click chuột vào thiết bị 3D
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        window.addEventListener('click', (event) => {
+            if (event.target.closest('button') || event.target.closest('aside') || event.target.closest('#info-modal')) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(interactableObjects, true);
+
+            if (intersects.length > 0) {
+                let target = intersects[0].object;
+                while (target.parent && !target.userData.name) {
+                    target = target.parent;
+                }
+                if (target.userData.name) {
+                    document.getElementById('modal-title').textContent = target.userData.name;
+                    document.getElementById('modal-desc').textContent = target.userData.desc;
+                    document.getElementById('modal-specs').textContent = target.userData.specs;
+                    document.getElementById('info-modal').classList.remove('hidden');
+                }
+            }
+        });
+
+        // --- 6. VÒNG LẶP ANIMATION & CẬP NHẬT THÔNG SỐ ---
+        let currentRpm = 3000;
+        let currentPower = 600;
+        let currentTemp = 540;
+        let currentPress = 17.5;
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Cập nhật thông số mượt mà khi Khởi động / Dừng
+            const targetRpm = isRunning ? 3000 : 0;
+            const targetPower = isRunning ? 600 : 0;
+            const targetTemp = isRunning ? 540 : 45;
+            const targetPress = isRunning ? 17.5 : 0.1;
+
+            currentRpm += (targetRpm - currentRpm) * 0.03;
+            currentPower += (targetPower - currentPower) * 0.03;
+            currentTemp += (targetTemp - currentTemp) * 0.02;
+            currentPress += (targetPress - currentPress) * 0.02;
+
+            // Hiển thị số liệu có dao động nhẹ thực tế
+            const jitter = isRunning ? (Math.random() - 0.5) * 0.4 : 0;
+            document.getElementById('val-rpm').textContent = Math.round(currentRpm);
+            document.getElementById('val-power').textContent = Math.max(0, currentPower + jitter).toFixed(1);
+            document.getElementById('val-temp').textContent = Math.round(currentTemp);
+            document.getElementById('val-pressure').textContent = Math.max(0.1, currentPress).toFixed(1);
+
+            // Quay trục Tua-bin theo tốc độ RPM
+            rotor.rotation.x += (currentRpm / 3000) * 0.25;
+
+            // Hiệu ứng khói bay lên từ ống khói
+            smokeParticles.forEach(p => {
+                if (isRunning) {
+                    p.visible = true;
+                    p.position.y += p.userData.speed;
+                    p.position.x += 0.015;
+                    p.scale.setScalar(1 + (p.position.y - 18) * 0.12);
+                    if (p.position.y > 28) {
+                        p.position.set(-12 + (Math.random() - 0.5), 18, -8 + (Math.random() - 0.5));
+                        p.scale.setScalar(1);
+                    }
+                } else {
+                    p.visible = false;
+                }
+            });
+
+            // Cập nhật vị trí nhãn 3D trên màn hình
+            labels.forEach(item => {
+                const pos = item.mesh.position.clone().add(item.offset);
+                pos.project(camera);
+                const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
+                const y = (-(pos.y * 0.5) + 0.5) * window.innerHeight;
+                item.element.style.left = `${x}px`;
+                item.element.style.top = `${y}px`;
+                item.element.style.display = pos.z < 1 ? 'block' : 'none';
+            });
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
